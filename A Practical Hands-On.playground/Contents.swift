@@ -126,13 +126,13 @@ example(of: "Automatic cancellation") {
 }
 
 example(of: "collect(int) operator") {
-    ["A", "B", "C", "D", "E", "F", "G"].publisher
+    _ = ["A", "B", "C", "D", "E", "F", "G"].publisher
         .collect(2)
         .sink { print($0) }
 }
 
 example(of: "map(_:) operator") {
-    ["A", "B", "C", "D"].publisher
+    _ = ["A", "B", "C", "D"].publisher
         .map { "\($0)\($0)" }
         .sink { print($0) }
 }
@@ -177,21 +177,21 @@ example(of: "flatMap(maxPublishers:_:) operator") {
 }
 
 example(of: "replaceNil(with:) operator") {
-    [1, nil, 3].publisher
+    _ = [1, nil, 3].publisher
         .replaceNil(with: 2)
-        .sink { print($0) }
+        .sink { print($0!) }
 
     /*
      OUTPUT:
      ——— Example of: replaceNil(with:) operator ———
-     Optional(1)
-     Optional(2)
-     Optional(3)
+     1
+     2
+     3
      */
 }
 
 example(of: "ReplaceEmpty(with:) operator") {
-    Empty<Int, Never>()
+    _ =  Empty<Int, Never>()
         .replaceEmpty(with: 1)
         .sink(receiveCompletion: { print($0) },
               receiveValue: { print($0) })
@@ -205,31 +205,31 @@ example(of: "ReplaceEmpty(with:) operator") {
 }
 
 example(of: "Scan(_:_:) operator") {
-    [1, 2, 3, 4].publisher
+    _ =  [1, 2, 3, 4].publisher
         .scan(0) { $0 + $1 }
         .sink { print($0) }
 }
 
 example(of: "filter(_:) operator") {
-    [1, 2, 3, 4].publisher
+    _ =  [1, 2, 3, 4].publisher
         .filter { $0 > 3 }
         .sink { print($0) }
 }
 
 example(of: "compactMap(_:) operator") {
-    [1, 2, 3, 4].publisher
+    _ =  [1, 2, 3, 4].publisher
         .compactMap { $0 % 2 == 0 ? nil : "e" }
         .sink { print($0) }
 }
 
 example(of: "first(where:) operator") {
-    [1, 2, 3, 4].publisher
+    _ =  [1, 2, 3, 4].publisher
         .first(where: { $0 > 3 } )
         .sink { print($0) }
 }
 
 example(of: "last(where:) operator") {
-    [1, 2, 3, 4].publisher
+    _ =  [1, 2, 3, 4].publisher
         .last(where: { $0 > 3 } )
         .sink { print($0) }
 }
@@ -394,91 +394,109 @@ example(of: "CurrentValueSubject") {
      */
 }
 
-print("\n——— Example of: Network Request ———")
-// 1
-struct User: Codable {
-    let id: Int
-    let name: String
-    let username: String
-    let email: String
-}
-struct Post: Codable {
-    let userId: Int
-    let id: Int
-    let title: String
-    let body: String
-}
-struct PostDetail {
-    let userId: Int
-    let postId: Int
-    let title: String
-    let body: String
-    let username: String
-}
+example(of: "Network Request") {
+    // 1
+    struct User: Codable {
+        let id: Int
+        let name: String
+        let username: String
+        let email: String
+    }
+    struct Post: Codable {
+        let userId: Int
+        let id: Int
+        let title: String
+        let body: String
+    }
+    struct PostDetail {
+        let userId: Int
+        let postId: Int
+        let title: String
+        let body: String
+        let username: String
+    }
 
-// 2
-func fetchUsers() -> AnyPublisher<[User], Error> {
-    let url = URL(string: "https://jsonplaceholder.typicode.com/users")!
-    return URLSession.shared.dataTaskPublisher(for: url)
-        .map(\.data)
-        .decode(type: [User].self, decoder: JSONDecoder())
-        .receive(on: DispatchQueue.main)
-        .eraseToAnyPublisher()
-}
-func fetchPosts() -> AnyPublisher<[Post], Error> {
-    let url = URL(string: "https://jsonplaceholder.typicode.com/posts")!
-    return URLSession.shared.dataTaskPublisher(for: url)
-        .map(\.data)
-        .decode(type: [Post].self, decoder: JSONDecoder())
-        .receive(on: DispatchQueue.main)
-        .eraseToAnyPublisher()
-}
+    class MyClass {
+        // 1
+        let queryInput = PassthroughSubject<String, Error>()
+        var cancellables: Set<AnyCancellable> = []
+        var filteredPosts: [PostDetail] = []
 
-// 3
-let queryInput = PassthroughSubject<String, Error>()
-var subscribers: Set<AnyCancellable> = []
-var filteredPosts: [PostDetail] = []
-
-// 4
-queryInput
-    .debounce(for: .seconds(0.5), scheduler: DispatchQueue.main)
-// 5
-    .combineLatest(fetchUsers(), fetchPosts())
-    .map { query, users, posts in
-        // 6
-        return posts
-            .filter { post in
-                post.title.lowercased().contains(query.lowercased())
-            }
-            .compactMap { post in
-                guard let user = users.first(where: { $0.id == post.userId }) else {
-                    return nil
+        // 2
+        func fetchUsers() -> AnyPublisher<[User], Error> {
+            let url = URL(string: "https://jsonplaceholder.typicode.com/users")!
+            return URLSession.shared.dataTaskPublisher(for: url)
+                .tryMap() { element -> Data in
+                    guard let httpResponse = element.response as? HTTPURLResponse,
+                          httpResponse.statusCode == 200 else {
+                        throw URLError(.badServerResponse)
+                    }
+                    return element.data
                 }
-                return PostDetail(userId: user.id, postId: post.id, title: post.title, body: post.body, username: user.username)
-            }
-    }
-    .sink { completion in
-        // 7
-        switch completion {
-        case .finished:
-            print("Update UI - Completion")
-        case .failure(let error):
-            print(error)
+                .decode(type: [User].self, decoder: JSONDecoder())
+                .receive(on: DispatchQueue.main)
+                .eraseToAnyPublisher()
         }
-    } receiveValue: { posts in
-        // 8
-        filteredPosts = posts
-        print("Filtered Posts: $\(filteredPosts)\n")
+        func fetchPosts() -> AnyPublisher<[Post], Error> {
+            let url = URL(string: "https://jsonplaceholder.typicode.com/posts")!
+            return URLSession.shared.dataTaskPublisher(for: url)
+                .tryMap() { element -> Data in
+                    guard let httpResponse = element.response as? HTTPURLResponse,
+                          httpResponse.statusCode == 200 else {
+                        throw URLError(.badServerResponse)
+                    }
+                    return element.data
+                }
+                .decode(type: [Post].self, decoder: JSONDecoder())
+                .receive(on: DispatchQueue.main)
+                .eraseToAnyPublisher()
+        }
+
+        init() {
+            // 4
+            queryInput
+                .debounce(for: .seconds(0.5), scheduler: DispatchQueue.main)
+                .removeDuplicates()
+                // 5
+                .combineLatest(fetchUsers(), fetchPosts())
+                // 6
+                .map { query, users, posts in
+                    return posts
+                        .filter { post in
+                            post.title.lowercased().contains(query.lowercased())
+                        }
+                        .compactMap { post in
+                            guard let user = users.first(where: { $0.id == post.userId }) else {
+                                return nil
+                            }
+                            return PostDetail(userId: user.id, postId: post.id, title: post.title, body: post.body, username: user.username)
+                        }
+                }
+                .sink { completion in
+                    // 7
+                    switch completion {
+                    case .finished:
+                        print("Update UI - Completion")
+                    case .failure(let error):
+                        print(error)
+                    }
+                } receiveValue: { posts in
+                    // 8
+                    self.filteredPosts = posts
+                    print("Filtered Posts: $\(posts)\n")
+                }
+                .store(in: &cancellables)
+        }
     }
-    .store(in: &subscribers)
 
-// 9
-queryInput.send("repellat")
-queryInput.send("possim")
-DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-    queryInput.send("possimus")
+    // 9
+    let myClass = MyClass()
+    myClass.queryInput.send("repellat")
+    myClass.queryInput.send("possim")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        myClass.queryInput.send("possimus")
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+        myClass.queryInput.send("occaecati")
+    }
 }
-DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-    queryInput.send("occaecati")
-}
-
